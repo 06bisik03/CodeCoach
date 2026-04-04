@@ -1,0 +1,61 @@
+name: Production Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-production:
+    name: deploy-production
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/codecoach
+      OPENAI_API_KEY: test-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production artifact
+        run: npm run build
+
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build-${{ github.sha }}
+          path: |
+            .next
+            public
+            package.json
+            package-lock.json
+          retention-days: 30
+
+      - name: Production deploy placeholder
+        run: |
+          echo "Production deployment scaffold is ready."
+          echo "Replace this step with your real deploy command and environment secrets."
