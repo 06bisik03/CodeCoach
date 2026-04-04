@@ -2,25 +2,24 @@
 
 import Editor from "@monaco-editor/react";
 
-const starterCode = `def two_sum(nums, target):
-    seen = {}
+type MonacoEditorPanelProps = {
+  language: string;
+  value: string;
+  onChange: (value: string) => void;
+};
 
-    for index, value in enumerate(nums):
-        complement = target - value
-        if complement in seen:
-            return [seen[complement], index]
-        seen[value] = index
-
-    return []
-`;
-
-export function MonacoEditorPanel() {
+export function MonacoEditorPanel({
+  language,
+  value,
+  onChange,
+}: MonacoEditorPanelProps) {
   return (
     <Editor
       height="100%"
-      defaultLanguage="python"
-      defaultValue={starterCode}
+      language={language}
+      value={value}
       theme="vs-dark"
+      onChange={(nextValue) => onChange(nextValue ?? "")}
       options={{
         automaticLayout: true,
         fontSize: 15,
