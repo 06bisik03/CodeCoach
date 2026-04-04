@@ -53,6 +53,9 @@ jobs:
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/codecoach
+      OPENAI_API_KEY: test-key
 
     steps:
       - name: Checkout
@@ -166,4 +169,4 @@ jobs:
         run: npx prisma generate
 
       - name: Apply schema to ephemeral Postgres
-        run: npx prisma db push --skip-generate
+        run: npx prisma db push
