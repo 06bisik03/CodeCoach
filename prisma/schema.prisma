@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Problem {
+  id          Int      @id @default(autoincrement())
+  title       String
+  slug        String   @unique
+  difficulty  String
+  description String
+  examples    Json
+  constraints String[]
+  starterCode Json
+  createdAt   DateTime @default(now())
+}
+
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  sessionId String
+  role      String
+  content   String
+  createdAt DateTime @default(now())
+}
