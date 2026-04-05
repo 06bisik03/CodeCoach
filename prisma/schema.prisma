@@ -25,3 +25,9 @@ model ChatMessage {
   content   String
   createdAt DateTime @default(now())
 }
+
+model Session {
+  id         String   @id
+  problemSlug String
+  startedAt  DateTime @default(now())
+}

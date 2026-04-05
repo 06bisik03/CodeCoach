@@ -8,6 +8,9 @@ vi.mock("@/lib/prisma", () => ({
     problem: {
       findUnique: vi.fn(),
     },
+    session: {
+      upsert: vi.fn((args: unknown) => args),
+    },
     chatMessage: {
       findMany: vi.fn(),
       create: vi.fn((args: unknown) => args),
@@ -105,6 +108,7 @@ describe("POST /api/chat", () => {
       reply: "Try using a hash map to reduce the lookup time.",
     });
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(1);
+    expect(prisma.session.upsert).toHaveBeenCalledTimes(1);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });

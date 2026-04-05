@@ -2,11 +2,19 @@
 
 import {
   FormEvent,
+  KeyboardEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import hljs from "highlight.js/lib/core";
+import cpp from "highlight.js/lib/languages/cpp";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import python from "highlight.js/lib/languages/python";
 import { MonacoEditorPanel } from "@/components/monaco-editor-panel";
+import { useCodeAnalysis } from "@/hooks/use-code-analysis";
 
 type LanguageOption = "Python" | "JavaScript" | "Java" | "C++";
 
@@ -36,6 +44,19 @@ type ChatMessage = {
   content: string;
 };
 
+type HistoryMessage = {
+  id: number;
+  sessionId: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
+type Toast = {
+  id: string;
+  message: string;
+};
+
 type ChatResponse = {
   reply: string;
 };
@@ -60,6 +81,13 @@ const STARTER_CODE_KEYS: Record<LanguageOption, string> = {
   Java: "java",
   "C++": "cpp",
 };
+
+const SESSION_STORAGE_KEY = "codecoach-session-id";
+
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("java", java);
+hljs.registerLanguage("cpp", cpp);
 
 function difficultyBadgeClasses(difficulty: string) {
   switch (difficulty) {
@@ -166,16 +194,67 @@ export function CodeCoachWorkspace() {
   const [sessionId, setSessionId] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [isProblemListLoading, setIsProblemListLoading] = useState(true);
   const [isProblemLoading, setIsProblemLoading] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [problemError, setProblemError] = useState<string | null>(null);
-  const [chatError, setChatError] = useState<string | null>(null);
   const latestMessageRef = useRef<HTMLDivElement | null>(null);
+  const toastCooldownsRef = useRef<Record<string, number>>({});
+  const { analysis, isDismissed, error: analysisError, dismiss } = useCodeAnalysis(
+    editorCode,
+    selectedProblemSlug,
+  );
 
   useEffect(() => {
-    setSessionId(globalThis.crypto.randomUUID());
+    const storedSessionId = window.localStorage.getItem(SESSION_STORAGE_KEY);
+
+    if (storedSessionId) {
+      setSessionId(storedSessionId);
+      return;
+    }
+
+    const nextSessionId = globalThis.crypto.randomUUID();
+    window.localStorage.setItem(SESSION_STORAGE_KEY, nextSessionId);
+    setSessionId(nextSessionId);
   }, []);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  }, [sessionId]);
+
+  const showToast = useMemo(
+    () => (message: string) => {
+      const now = Date.now();
+      const lastShownAt = toastCooldownsRef.current[message] ?? 0;
+
+      if (now - lastShownAt < 5000) {
+        return;
+      }
+
+      toastCooldownsRef.current[message] = now;
+
+      const toastId = globalThis.crypto.randomUUID();
+      setToasts((currentToasts) => [
+        ...currentToasts,
+        {
+          id: toastId,
+          message,
+        },
+      ]);
+
+      window.setTimeout(() => {
+        setToasts((currentToasts) =>
+          currentToasts.filter((toast) => toast.id !== toastId),
+        );
+      }, 4000);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -215,7 +294,9 @@ export function CodeCoachWorkspace() {
         setSelectedProblem(detail);
       } catch (error) {
         if (!cancelled) {
-          setProblemError(getErrorMessage(error));
+          const message = getErrorMessage(error);
+          setProblemError(message);
+          showToast(message);
         }
       } finally {
         if (!cancelled) {
@@ -230,11 +311,49 @@ export function CodeCoachWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     setEditorCode(getStarterCode(selectedProblem, selectedLanguage));
   }, [selectedProblem, selectedLanguage]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadChatHistory() {
+      try {
+        const history = await fetchJson<HistoryMessage[]>(
+          `/api/chat/history?sessionId=${encodeURIComponent(sessionId)}`,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setChatMessages(
+          history.map((message) => ({
+            id: `history-${message.id}`,
+            role: message.role,
+            content: message.content,
+          })),
+        );
+      } catch (error) {
+        if (!cancelled) {
+          showToast(getErrorMessage(error));
+        }
+      }
+    }
+
+    void loadChatHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, showToast]);
 
   useEffect(() => {
     latestMessageRef.current?.scrollIntoView({
@@ -242,6 +361,12 @@ export function CodeCoachWorkspace() {
       block: "end",
     });
   }, [chatMessages, isChatLoading]);
+
+  useEffect(() => {
+    if (analysisError) {
+      showToast(analysisError);
+    }
+  }, [analysisError, showToast]);
 
   async function handleProblemSelect(slug: string) {
     if (slug === selectedProblemSlug && selectedProblem) {
@@ -256,7 +381,9 @@ export function CodeCoachWorkspace() {
       const detail = await fetchJson<ProblemDetail>(`/api/problems/${slug}`);
       setSelectedProblem(detail);
     } catch (error) {
-      setProblemError(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setProblemError(message);
+      showToast(message);
     } finally {
       setIsProblemLoading(false);
     }
@@ -276,13 +403,14 @@ export function CodeCoachWorkspace() {
       return;
     }
 
-    setChatError(null);
     setChatInput("");
     setIsChatLoading(true);
+    const pendingUserMessageId = globalThis.crypto.randomUUID();
+
     setChatMessages((currentMessages) => [
       ...currentMessages,
       {
-        id: globalThis.crypto.randomUUID(),
+        id: pendingUserMessageId,
         role: "user",
         content: trimmedMessage,
       },
@@ -310,21 +438,47 @@ export function CodeCoachWorkspace() {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
 
-      setChatError(errorMessage);
-      setChatMessages((currentMessages) => [
-        ...currentMessages,
-        {
-          id: globalThis.crypto.randomUUID(),
-          role: "assistant",
-          content: errorMessage,
-        },
-      ]);
+      setChatMessages((currentMessages) =>
+        currentMessages.filter((message) => message.id !== pendingUserMessageId),
+      );
+      setChatInput(trimmedMessage);
+      showToast(errorMessage);
     } finally {
       setIsChatLoading(false);
     }
   }
 
+  function handleNewSession() {
+    const nextSessionId = globalThis.crypto.randomUUID();
+
+    setSessionId(nextSessionId);
+    setChatMessages([]);
+    setChatInput("");
+    setEditorCode(getStarterCode(selectedProblem, selectedLanguage));
+  }
+
+  function handleChatKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    const isShortcutPressed = event.ctrlKey || event.metaKey;
+
+    if (!isShortcutPressed) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const form = event.currentTarget.form;
+    if (form) {
+      form.requestSubmit();
+    }
+  }
+
   const examples = normalizeExamples(selectedProblem?.examples);
+  const shouldShowAnalysisBanner = Boolean(analysis && !isDismissed);
+  const isAnalysisHealthy = analysis === "LGTM";
 
   return (
     <main className="flex min-h-screen flex-col bg-transparent px-4 py-4 text-foreground md:px-6">
@@ -357,6 +511,14 @@ export function CodeCoachWorkspace() {
                 ))}
               </select>
             </label>
+
+            <button
+              type="button"
+              onClick={handleNewSession}
+              className="rounded-2xl border border-border bg-panel px-5 py-3 text-sm font-semibold text-white transition hover:border-sky-400/40 hover:text-sky-200"
+            >
+              New Session
+            </button>
 
             <button
               type="button"
@@ -519,6 +681,27 @@ export function CodeCoachWorkspace() {
                 {selectedLanguage}
               </span>
             </div>
+            {shouldShowAnalysisBanner ? (
+              <div
+                className={`flex items-center justify-between gap-3 border-b px-5 py-3 text-sm ${
+                  isAnalysisHealthy
+                    ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+                    : "border-amber-400/20 bg-amber-400/10 text-amber-100"
+                }`}
+              >
+                <p className="leading-6">
+                  {isAnalysisHealthy ? "✓ Looking good" : analysis}
+                </p>
+                <button
+                  type="button"
+                  onClick={dismiss}
+                  className="rounded-lg px-2 py-1 text-base leading-none transition hover:bg-black/10"
+                  aria-label="Dismiss analysis banner"
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
             <div className="flex-1 overflow-hidden rounded-b-[24px]">
               <MonacoEditorPanel
                 language={MONACO_LANGUAGES[selectedLanguage]}
@@ -555,14 +738,17 @@ export function CodeCoachWorkspace() {
                           : "rounded-tl-sm bg-panel text-slate-300"
                       }`}
                     >
-                      {message.content}
+                      <ChatMessageContent content={message.content} />
                     </div>
                   ))
                 )}
 
                 {isChatLoading ? (
                   <div className="max-w-[90%] rounded-2xl rounded-tl-sm bg-panel px-4 py-3 text-sm leading-6 text-slate-400">
-                    CodeCoach is thinking...
+                    <span className="inline-flex items-center gap-1">
+                      <span>CodeCoach is thinking</span>
+                      <TypingDots />
+                    </span>
                   </div>
                 ) : null}
 
@@ -578,6 +764,7 @@ export function CodeCoachWorkspace() {
                     aria-label="Chat input"
                     value={chatInput}
                     onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={handleChatKeyDown}
                     placeholder="Ask CodeCoach for a hint..."
                     className="min-h-20 flex-1 resize-none bg-transparent text-sm text-slate-200 outline-none placeholder:text-slate-500"
                     disabled={!selectedProblemSlug || !sessionId || isChatLoading}
@@ -595,15 +782,155 @@ export function CodeCoachWorkspace() {
                     Send
                   </button>
                 </form>
-
-                {chatError ? (
-                  <p className="mt-3 text-sm text-rose-300">{chatError}</p>
-                ) : null}
               </div>
             </div>
           </aside>
         </section>
       </div>
+
+      <div className="pointer-events-none fixed right-5 top-5 z-50 flex w-full max-w-sm flex-col gap-3">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className="pointer-events-auto rounded-2xl border border-rose-400/20 bg-panel-strong/95 px-4 py-3 text-sm text-rose-100 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur"
+          >
+            {toast.message}
+          </div>
+        ))}
+      </div>
     </main>
+  );
+}
+
+type ChatSegment =
+  | {
+      type: "text";
+      content: string;
+    }
+  | {
+      type: "code";
+      content: string;
+      language: string | null;
+    };
+
+function parseChatContent(content: string): ChatSegment[] {
+  const pattern = /```([\w+-]+)?\n?([\s\S]*?)```/g;
+  const segments: ChatSegment[] = [];
+  let lastIndex = 0;
+
+  for (const match of content.matchAll(pattern)) {
+    const fullMatch = match[0];
+    const language = match[1] ?? null;
+    const code = match[2] ?? "";
+    const matchIndex = match.index ?? 0;
+
+    if (matchIndex > lastIndex) {
+      segments.push({
+        type: "text",
+        content: content.slice(lastIndex, matchIndex),
+      });
+    }
+
+    segments.push({
+      type: "code",
+      content: code.replace(/\n$/, ""),
+      language,
+    });
+
+    lastIndex = matchIndex + fullMatch.length;
+  }
+
+  if (lastIndex < content.length) {
+    segments.push({
+      type: "text",
+      content: content.slice(lastIndex),
+    });
+  }
+
+  return segments;
+}
+
+function normalizeHighlightLanguage(language: string | null) {
+  switch (language?.toLowerCase()) {
+    case "js":
+    case "javascript":
+      return "javascript";
+    case "py":
+    case "python":
+      return "python";
+    case "java":
+      return "java";
+    case "cpp":
+    case "c++":
+    case "cc":
+    case "cxx":
+      return "cpp";
+    default:
+      return null;
+  }
+}
+
+function highlightCode(content: string, language: string | null) {
+  const normalizedLanguage = normalizeHighlightLanguage(language);
+
+  if (normalizedLanguage && hljs.getLanguage(normalizedLanguage)) {
+    return hljs.highlight(content, {
+      language: normalizedLanguage,
+    }).value;
+  }
+
+  return hljs.highlightAuto(content).value;
+}
+
+function ChatMessageContent({
+  content,
+}: {
+  content: string;
+}) {
+  const segments = parseChatContent(content);
+
+  return (
+    <div className="space-y-3">
+      {segments.map((segment, index) =>
+        segment.type === "text" ? (
+          <p
+            key={`text-${index}`}
+            className="whitespace-pre-wrap break-words"
+          >
+            {segment.content}
+          </p>
+        ) : (
+          <pre
+            key={`code-${index}`}
+            className="overflow-x-auto rounded-xl border border-border bg-[#0a1020] px-4 py-3 text-[13px] leading-6 text-slate-100"
+          >
+            <code
+              className="hljs"
+              dangerouslySetInnerHTML={{
+                __html: highlightCode(segment.content, segment.language),
+              }}
+            />
+          </pre>
+        ),
+      )}
+    </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex items-center">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className="inline-block animate-pulse text-slate-300"
+          style={{
+            animationDelay: `${index * 0.18}s`,
+          }}
+        >
+          .
+        </span>
+      ))}
+    </span>
   );
 }

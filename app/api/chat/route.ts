@@ -104,6 +104,16 @@ export async function POST(request: Request) {
     "I do not have feedback yet. Try asking again with a bit more detail.";
 
   await prisma.$transaction([
+    prisma.session.upsert({
+      where: {
+        id: sessionId,
+      },
+      update: {},
+      create: {
+        id: sessionId,
+        problemSlug,
+      },
+    }),
     prisma.chatMessage.create({
       data: {
         sessionId,
