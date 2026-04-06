@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+import { isLikelyPlaceholderCode } from "@/lib/code-analysis";
+
+describe("analysis heuristics", () => {
+  it("treats a hardcoded literal return as incomplete", () => {
+    expect(
+      isLikelyPlaceholderCode(
+        "function twoSum(nums, target) {\n  return 5;\n}\n",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat a real loop-based implementation as placeholder code", () => {
+    expect(
+      isLikelyPlaceholderCode(
+        [
+          "function twoSum(nums, target) {",
+          "  for (let i = 0; i < nums.length; i += 1) {",
+          "    for (let j = i + 1; j < nums.length; j += 1) {",
+          "      if (nums[i] + nums[j] === target) return [i, j];",
+          "    }",
+          "  }",
+          "}",
+        ].join("\n"),
+      ),
+    ).toBe(false);
+  });
+});

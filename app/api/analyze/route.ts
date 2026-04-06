@@ -4,13 +4,14 @@ import {
   getAiUnavailableMessage,
   openai,
 } from "@/lib/openai";
+import { isLikelyPlaceholderCode } from "@/lib/code-analysis";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SYSTEM_PROMPT =
-  "You are a coding interview coach reviewing code in real time. Analyze ONLY for these issues and be brief (max 2 sentences per issue):\n1. Time complexity problems — warn if the solution is O(n²) or worse when a faster approach is clearly possible. Mention the better complexity.\n2. Space complexity problems — flag unnecessary memory usage.\n3. Interview red flags — things that would hurt the user in a real interview (e.g. using eval(), not handling edge cases, overly complex logic).\nIf the code looks good or is incomplete, respond with exactly: LGTM";
+  "You are a coding interview coach reviewing code in real time. Analyze ONLY for these issues and be brief (max 2 sentences per issue):\n1. Time complexity problems — warn only when the code contains enough concrete logic to support the claim, and only if the solution is O(n²) or worse when a faster approach is clearly possible. Mention the better complexity.\n2. Space complexity problems — flag unnecessary memory usage only when the code actually allocates extra structures.\n3. Interview red flags — things that would hurt the user in a real interview (e.g. using eval(), not handling edge cases, overly complex logic).\nDo not guess complexity from placeholder or incomplete code. A fixed literal return, TODO, pass, or obviously incomplete stub must be treated as incomplete. If the code looks good or is incomplete, respond with exactly: LGTM";
 
 type AnalyzeRequestBody = {
   code?: string;
@@ -34,6 +35,10 @@ export async function POST(request: Request) {
 
     if (!code || !problemSlug) {
       return errorResponse("code and problemSlug are required.", 400);
+    }
+
+    if (isLikelyPlaceholderCode(code)) {
+      return errorResponse("LGTM", 200);
     }
 
     if (!openai) {

@@ -7,15 +7,17 @@ datasource db {
 }
 
 model Problem {
-  id          Int      @id @default(autoincrement())
+  id          Int        @id @default(autoincrement())
   title       String
-  slug        String   @unique
+  slug        String     @unique
   difficulty  String
   description String
   examples    Json
   constraints String[]
   starterCode Json
-  createdAt   DateTime @default(now())
+  testCases   TestCase[]
+  solvedBy    SolvedProblem[]
+  createdAt   DateTime   @default(now())
 }
 
 model ChatMessage {
@@ -27,7 +29,56 @@ model ChatMessage {
 }
 
 model Session {
-  id         String   @id
+  id          String   @id
   problemSlug String
-  startedAt  DateTime @default(now())
+  startedAt   DateTime @default(now())
+}
+
+model TestCase {
+  id          Int      @id @default(autoincrement())
+  problemId   Int
+  input       Json
+  expected    Json
+  isHidden    Boolean  @default(false)
+  explanation String?
+  sortOrder   Int
+  createdAt   DateTime @default(now())
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@index([problemId, isHidden, sortOrder])
+}
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  passwordHash   String?
+  googleId       String?       @unique
+  authSessions   AuthSession[]
+  solvedProblems SolvedProblem[]
+  createdAt      DateTime      @default(now())
+}
+
+model AuthSession {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model SolvedProblem {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  problemId Int
+  solvedAt  DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem  Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, problemId])
+  @@index([problemId])
 }

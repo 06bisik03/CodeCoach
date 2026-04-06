@@ -36,7 +36,23 @@ If you want a stronger local model and your machine can handle it, you can use:
 ollama pull qwen2.5-coder:7b
 ```
 
-### 3. Optional AI environment variables
+### 3. Start a local Piston server
+
+`Run Code` now uses Piston for sandboxed execution. The public Piston API is no longer a reliable default, so this project expects a local or self-hosted Piston instance.
+
+Start one locally with Docker:
+
+```bash
+docker run --privileged -dit -p 2000:2000 --name piston_api ghcr.io/engineer-man/piston
+```
+
+Optional `.env` override if your Piston server lives elsewhere:
+
+```env
+PISTON_API_URL="http://127.0.0.1:2000/api/v2"
+```
+
+### 4. Optional AI environment variables
 
 The app works with Ollama by default, but you can override the AI settings if you want:
 
@@ -54,7 +70,7 @@ OPENAI_API_KEY="your_key_here"
 OPENAI_MODEL="gpt-4o"
 ```
 
-### 4. Run the app
+### 5. Run the app
 
 ```bash
 npm run dev
@@ -75,5 +91,5 @@ npm run seed
 ## Notes
 
 - Chat and code analysis use Ollama's local OpenAI-compatible API by default.
-- The top-right `Run Code` button is still a placeholder and is not wired to code execution yet.
+- `Run Code` executes the visible test cases for each seeded problem through Piston.
 - `.env` is ignored by Git, so keep local secrets there if you later switch back to OpenAI.
