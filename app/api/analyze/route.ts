@@ -1,4 +1,9 @@
-import { openai } from "@/lib/openai";
+import {
+  aiModel,
+  getAiErrorDetails,
+  getAiUnavailableMessage,
+  openai,
+} from "@/lib/openai";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -12,61 +17,69 @@ type AnalyzeRequestBody = {
   problemSlug?: string;
 };
 
-export async function POST(request: Request) {
-  const body = (await request.json()) as AnalyzeRequestBody;
-  const code = body.code?.trim();
-  const problemSlug = body.problemSlug?.trim();
-
-  if (!code || !problemSlug) {
-    return new Response("code and problemSlug are required.", {
-      status: 400,
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-      },
-    });
-  }
-
-  const problem = await prisma.problem.findUnique({
-    where: {
-      slug: problemSlug,
-    },
-  });
-
-  if (!problem) {
-    return new Response("Problem not found.", {
-      status: 404,
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-      },
-    });
-  }
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: [
-          `Problem title: ${problem.title}`,
-          `Difficulty: ${problem.difficulty}`,
-          `Description:\n${problem.description}`,
-          `Constraints:\n${problem.constraints.join("\n")}`,
-          `Current code:\n${code}`,
-        ].join("\n\n"),
-      },
-    ],
-  });
-
-  const analysis =
-    completion.choices[0]?.message?.content?.trim() || "LGTM";
-
-  return new Response(analysis, {
+function errorResponse(message: string, status: number) {
+  return new Response(message, {
+    status,
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
     },
   });
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as AnalyzeRequestBody;
+    const code = body.code?.trim();
+    const problemSlug = body.problemSlug?.trim();
+
+    if (!code || !problemSlug) {
+      return errorResponse("code and problemSlug are required.", 400);
+    }
+
+    if (!openai) {
+      return errorResponse(
+        getAiUnavailableMessage("analysis"),
+        503,
+      );
+    }
+
+    const problem = await prisma.problem.findUnique({
+      where: {
+        slug: problemSlug,
+      },
+    });
+
+    if (!problem) {
+      return errorResponse("Problem not found.", 404);
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: aiModel,
+      messages: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content: [
+            `Problem title: ${problem.title}`,
+            `Difficulty: ${problem.difficulty}`,
+            `Description:\n${problem.description}`,
+            `Constraints:\n${problem.constraints.join("\n")}`,
+            `Current code:\n${code}`,
+          ].join("\n\n"),
+        },
+      ],
+    });
+
+    const analysis =
+      completion.choices[0]?.message?.content?.trim() || "LGTM";
+
+    return errorResponse(analysis, 200);
+  } catch (error) {
+    console.error("POST /api/analyze failed", error);
+    const errorDetails = getAiErrorDetails(error, "analysis");
+    return errorResponse(errorDetails.message, errorDetails.status);
+  }
 }

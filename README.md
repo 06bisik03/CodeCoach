@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CodeCoach
 
-## Getting Started
+CodeCoach is a LeetCode-style interview workspace built with Next.js, Prisma, Monaco Editor, and a local AI coach.
 
-First, run the development server:
+## Local Setup
+
+### 1. Start PostgreSQL
+
+Make sure your local PostgreSQL instance is running and your `.env` points at a real database:
+
+```env
+DATABASE_URL="postgresql://your_username@localhost:5432/codecoach"
+```
+
+Then apply the schema and seed the sample problems:
+
+```bash
+npx prisma db push
+npx prisma generate
+npm run seed
+```
+
+### 2. Install and run Ollama
+
+CodeCoach now defaults to Ollama instead of the paid OpenAI API.
+
+Install Ollama from [ollama.com/download](https://ollama.com/download), then pull a coding model:
+
+```bash
+ollama pull qwen2.5-coder:3b
+```
+
+If you want a stronger local model and your machine can handle it, you can use:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+### 3. Optional AI environment variables
+
+The app works with Ollama by default, but you can override the AI settings if you want:
+
+```env
+AI_PROVIDER="ollama"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+OLLAMA_MODEL="qwen2.5-coder:3b"
+```
+
+If you ever want to switch back to OpenAI later:
+
+```env
+AI_PROVIDER="openai"
+OPENAI_API_KEY="your_key_here"
+OPENAI_MODEL="gpt-4o"
+```
+
+### 4. Run the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev
+npm run build
+npm run lint
+npm run test
+npm run seed
+```
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Chat and code analysis use Ollama's local OpenAI-compatible API by default.
+- The top-right `Run Code` button is still a placeholder and is not wired to code execution yet.
+- `.env` is ignored by Git, so keep local secrets there if you later switch back to OpenAI.

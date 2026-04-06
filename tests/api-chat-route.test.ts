@@ -20,6 +20,28 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/openai", () => ({
+  aiModel: "qwen2.5-coder:3b",
+  getAiUnavailableMessage: vi.fn(
+    () => "AI is not configured for chat right now.",
+  ),
+  getAiErrorDetails: vi.fn((error: unknown) => {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      error.status === 429
+    ) {
+      return {
+        message: "AI provider is unavailable right now.",
+        status: 429,
+      };
+    }
+
+    return {
+      message: "CodeCoach could not respond right now. Please try again.",
+      status: 500,
+    };
+  }),
   openai: {
     chat: {
       completions: {
@@ -110,5 +132,46 @@ describe("POST /api/chat", () => {
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(1);
     expect(prisma.session.upsert).toHaveBeenCalledTimes(1);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a JSON error when the OpenAI request fails", async () => {
+    vi.mocked(prisma.problem.findUnique).mockResolvedValue({
+      id: 1,
+      title: "Two Sum",
+      slug: "two-sum",
+      difficulty: "Easy",
+      description: "Find two numbers that add up to a target.",
+      examples: [],
+      constraints: ["2 <= nums.length <= 10^4"],
+      starterCode: {},
+      createdAt: new Date("2026-04-04T00:00:00.000Z"),
+    });
+    vi.mocked(prisma.chatMessage.findMany).mockResolvedValue([]);
+    vi.mocked(openai.chat.completions.create).mockRejectedValue(
+      Object.assign(new Error("OpenAI quota exceeded."), {
+        status: 429,
+      }),
+    );
+
+    const request = new Request("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: "Can you review this approach?",
+        code: "def two_sum(nums, target):\n    pass",
+        problemSlug: "two-sum",
+        sessionId: "session-123",
+      }),
+    });
+
+    const response = await POST(request);
+    const json = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(json).toEqual({
+      error: "AI provider is unavailable right now.",
+    });
   });
 });

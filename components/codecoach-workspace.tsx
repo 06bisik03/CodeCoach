@@ -114,28 +114,54 @@ async function fetchJson<T>(
   input: string,
   init?: RequestInit,
 ): Promise<T> {
+  const headers = new Headers(init?.headers);
+
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(input, {
     ...init,
     cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
 
-  const json = (await response.json()) as
+  const rawBody = await response.text();
+  let json:
     | T
     | {
         error?: string;
-      };
+      }
+    | null = null;
+
+  if (rawBody) {
+    try {
+      json = JSON.parse(rawBody) as
+        | T
+        | {
+            error?: string;
+          };
+    } catch {
+      if (response.ok) {
+        throw new Error("The server returned an invalid response.");
+      }
+    }
+  }
 
   if (!response.ok) {
     const errorMessage =
-      typeof (json as { error?: string }).error === "string"
-        ? (json as { error?: string }).error
-        : "Request failed.";
+      json &&
+      typeof json === "object" &&
+      "error" in json &&
+      typeof json.error === "string"
+        ? json.error
+        : rawBody || `Request failed with status ${response.status}.`;
 
     throw new Error(errorMessage);
+  }
+
+  if (!json) {
+    throw new Error("The server returned an empty response.");
   }
 
   return json as T;
@@ -438,10 +464,14 @@ export function CodeCoachWorkspace() {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
 
-      setChatMessages((currentMessages) =>
-        currentMessages.filter((message) => message.id !== pendingUserMessageId),
-      );
-      setChatInput(trimmedMessage);
+      setChatMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: `${pendingUserMessageId}-error`,
+          role: "assistant",
+          content: errorMessage,
+        },
+      ]);
       showToast(errorMessage);
     } finally {
       setIsChatLoading(false);
@@ -481,8 +511,8 @@ export function CodeCoachWorkspace() {
   const isAnalysisHealthy = analysis === "LGTM";
 
   return (
-    <main className="flex min-h-screen flex-col bg-transparent px-4 py-4 text-foreground md:px-6">
-      <div className="flex min-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-[28px] border border-border bg-panel/90 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur xl:min-h-[calc(100vh-3rem)]">
+    <main className="flex min-h-screen flex-col bg-transparent px-4 py-4 text-foreground md:h-dvh md:overflow-hidden md:px-6">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-[28px] border border-border bg-panel/90 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur md:min-h-0">
         <nav className="flex flex-col gap-4 border-b border-border bg-panel-strong/95 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-accent">
@@ -529,8 +559,8 @@ export function CodeCoachWorkspace() {
           </div>
         </nav>
 
-        <section className="flex flex-1 flex-col gap-4 p-4 lg:flex-row">
-          <aside className="flex min-h-[280px] flex-col overflow-hidden rounded-[24px] border border-border bg-panel-strong p-5 lg:basis-1/4">
+        <section className="flex flex-1 flex-col gap-4 p-4 md:min-h-0 md:flex-row">
+          <aside className="flex min-h-[280px] flex-col overflow-hidden rounded-[24px] border border-border bg-panel-strong p-5 md:min-h-0 md:basis-1/4 md:min-w-0">
             <div className="border-b border-border pb-4">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
                 Problems
@@ -667,7 +697,7 @@ export function CodeCoachWorkspace() {
             </div>
           </aside>
 
-          <section className="flex min-h-[420px] flex-col rounded-[24px] border border-border bg-panel-strong lg:basis-[45%]">
+          <section className="flex min-h-[420px] flex-col rounded-[24px] border border-border bg-panel-strong md:min-h-0 md:basis-[45%] md:min-w-0">
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
@@ -711,7 +741,7 @@ export function CodeCoachWorkspace() {
             </div>
           </section>
 
-          <aside className="flex min-h-[280px] flex-col rounded-[24px] border border-border bg-panel-strong lg:basis-[30%]">
+          <aside className="flex min-h-[280px] flex-col rounded-[24px] border border-border bg-panel-strong md:min-h-0 md:basis-[30%] md:min-w-0">
             <div className="border-b border-border px-5 py-4">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
                 AI Coach

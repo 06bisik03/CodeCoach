@@ -57,10 +57,14 @@ export function useCodeAnalysis(
           setAnalysis(text || "LGTM");
           setIsDismissed(false);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setAnalysis(null);
-          setError("Code analysis is unavailable right now.");
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Code analysis is unavailable right now.",
+          );
         }
       }
     }, 3000);
