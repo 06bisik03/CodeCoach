@@ -15,6 +15,7 @@ import javascript from "highlight.js/lib/languages/javascript";
 import python from "highlight.js/lib/languages/python";
 import { MonacoEditorPanel } from "@/components/monaco-editor-panel";
 import { useCodeAnalysis } from "@/hooks/use-code-analysis";
+import { getDemoRunShowcaseCode } from "@/lib/demo-run-showcase";
 
 type LanguageOption = "Python" | "JavaScript" | "Java" | "C++";
 
@@ -277,6 +278,68 @@ function normalizeExamples(examples: unknown): ProblemExample[] {
       },
     ];
   });
+}
+
+function createFallbackDemoExample(problemTitle: string | undefined): ProblemExample {
+  return {
+    input: problemTitle ? `${problemTitle} sample input` : "Sample input",
+    output: "Sample output",
+    explanation:
+      "This is a preview of the run-results experience used when live execution is unavailable in the public demo.",
+  };
+}
+
+function getDemoWrongAnswerValue(expectedOutput: string) {
+  const normalized = expectedOutput.trim();
+
+  if (/^\[.*\]$/.test(normalized)) {
+    return "[demo mismatch]";
+  }
+
+  if (/^(true|false)$/i.test(normalized)) {
+    return normalized.toLowerCase() === "true" ? "false" : "true";
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return "0";
+  }
+
+  return "Unexpected result";
+}
+
+function createDemoRunResponse(
+  variant: "accepted" | "wrong-answer",
+  examples: ProblemExample[],
+  problemTitle?: string,
+): RunResponse {
+  const sourceExamples =
+    examples.length > 0 ? examples.slice(0, 3) : [createFallbackDemoExample(problemTitle)];
+
+  const cases = sourceExamples.map((example, index) => {
+    const isPassed = variant === "accepted" || index > 0;
+
+    return {
+      id: index + 1,
+      inputSummary: example.input || "Sample input",
+      expectedSummary: example.output || "Sample output",
+      actualSummary: isPassed
+        ? example.output || "Sample output"
+        : getDemoWrongAnswerValue(example.output || "Sample output"),
+      passed: isPassed,
+      explanation: example.explanation ?? null,
+    };
+  });
+
+  const passedCount = cases.filter((testCase) => testCase.passed).length;
+
+  return {
+    status: variant,
+    summary:
+      variant === "accepted"
+        ? `Demo preview: accepted on ${cases.length} visible test case${cases.length === 1 ? "" : "s"}.`
+        : `Demo preview: passed ${passedCount} of ${cases.length} visible test cases.`,
+    cases,
+  };
 }
 
 function getStarterCode(
@@ -974,6 +1037,34 @@ export function CodeCoachWorkspace() {
     }
 
     window.location.assign("/api/auth/google");
+  }
+
+  function handleRunCodePreview(variant: "accepted" | "wrong-answer") {
+    if (
+      !selectedProblemSlug ||
+      !(
+        selectedProblemSlug === "two-sum" ||
+        selectedProblemSlug === "valid-parentheses" ||
+        selectedProblemSlug === "best-time-to-buy-and-sell-stock"
+      )
+    ) {
+      return;
+    }
+
+    setEditorCode(
+      getDemoRunShowcaseCode(selectedProblemSlug, selectedLanguage, variant),
+    );
+
+    const demoResult = createDemoRunResponse(
+      variant,
+      normalizeExamples(selectedProblem?.examples),
+      selectedProblem?.title,
+    );
+
+    setRunCodeNoticeState(null);
+    setIsRunResultsOpen(true);
+    setIsRunErrorDetailsOpen(false);
+    setRunResult(demoResult);
   }
 
   async function handleRunCode() {
@@ -1799,7 +1890,21 @@ export function CodeCoachWorkspace() {
               </p>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => handleRunCodePreview("wrong-answer")}
+                className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-5 py-3 text-sm font-semibold text-amber-100 transition hover:border-amber-300/30 hover:bg-amber-400/15"
+              >
+                Rejected Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRunCodePreview("accepted")}
+                className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/30 hover:bg-emerald-400/15"
+              >
+                Accepted Preview
+              </button>
               <button
                 type="button"
                 onClick={() => setRunCodeNoticeState(null)}
