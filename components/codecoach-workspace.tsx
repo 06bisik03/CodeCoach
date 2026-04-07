@@ -104,6 +104,12 @@ type SolvedModalState = {
   saved: boolean;
 };
 
+type RunCodeNoticeState = {
+  title: string;
+  description: string;
+  details: string;
+};
+
 type RunErrorDisplay = {
   title: string;
   message: string;
@@ -299,6 +305,24 @@ function getSessionLanguageStorageKey(sessionId: string) {
   return `${SESSION_LANGUAGE_STORAGE_PREFIX}:${sessionId}`;
 }
 
+function getRunCodeNotice(message: string): RunCodeNoticeState | null {
+  if (
+    /Piston is not reachable/i.test(message) ||
+    /CodeCoach could not run your solution right now/i.test(message) ||
+    /Request failed with status 503/i.test(message)
+  ) {
+    return {
+      title: "Run Code is unavailable in this deployment",
+      description:
+        "This public demo does not currently have a live code-execution runner attached.",
+      details:
+        "The full CodeCoach project supports real execution with a dedicated runner service. In this live deployment, you can still explore the interview workspace, AI coaching, persistence, and solved-problem flow without code execution.",
+    };
+  }
+
+  return null;
+}
+
 function getExpectedEntryPoint(
   problemSlug: string | null,
   language: LanguageOption,
@@ -436,6 +460,8 @@ export function CodeCoachWorkspace() {
   const [runResult, setRunResult] = useState<RunResponse | null>(null);
   const [solvedModalState, setSolvedModalState] =
     useState<SolvedModalState | null>(null);
+  const [runCodeNoticeState, setRunCodeNoticeState] =
+    useState<RunCodeNoticeState | null>(null);
   const [isProblemListLoading, setIsProblemListLoading] = useState(true);
   const [isProblemLoading, setIsProblemLoading] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -996,6 +1022,13 @@ export function CodeCoachWorkspace() {
       }
     } catch (error) {
       const message = getErrorMessage(error);
+      const runCodeNotice = getRunCodeNotice(message);
+
+      if (runCodeNotice) {
+        setRunCodeNoticeState(runCodeNotice);
+        return;
+      }
+
       showToast(message);
     } finally {
       setIsRunLoading(false);
@@ -1741,6 +1774,38 @@ export function CodeCoachWorkspace() {
               </button>
             </div>
             </form>
+          </div>
+        </ModalShell>
+      ) : null}
+
+      {runCodeNoticeState ? (
+        <ModalShell
+          title={runCodeNoticeState.title}
+          description={runCodeNoticeState.description}
+          onClose={() => setRunCodeNoticeState(null)}
+        >
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-amber-400/20 bg-[radial-gradient(circle_at_top,rgba(96,165,250,0.16),transparent_55%),linear-gradient(180deg,rgba(251,191,36,0.08),rgba(5,8,22,0.55))] px-5 py-5">
+              <p className="text-xs uppercase tracking-[0.35em] text-amber-200/70">
+                Deployment note
+              </p>
+              <h3 className="mt-3 text-2xl font-semibold text-white">
+                Code execution is offline here
+              </h3>
+              <p className="mt-3 text-sm leading-7 text-slate-200">
+                {runCodeNoticeState.details}
+              </p>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRunCodeNoticeState(null)}
+                className="rounded-2xl border border-border bg-panel px-5 py-3 text-sm font-semibold text-white transition hover:border-sky-400/40 hover:text-sky-200"
+              >
+                Keep Exploring
+              </button>
+            </div>
           </div>
         </ModalShell>
       ) : null}
