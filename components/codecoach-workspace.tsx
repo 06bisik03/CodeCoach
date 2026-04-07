@@ -309,14 +309,16 @@ function getRunCodeNotice(message: string): RunCodeNoticeState | null {
   if (
     /Piston is not reachable/i.test(message) ||
     /CodeCoach could not run your solution right now/i.test(message) ||
-    /Request failed with status 503/i.test(message)
+    /Request failed with status 503/i.test(message) ||
+    /Request failed with status 404/i.test(message) ||
+    /\bnot found\b/i.test(message)
   ) {
     return {
       title: "Run Code is unavailable in this deployment",
       description:
-        "This public demo does not currently have a live code-execution runner attached.",
+        "This public demo does not currently have a live Piston runner attached for executing code.",
       details:
-        "The full CodeCoach project supports real execution with a dedicated runner service. In this live deployment, you can still explore the interview workspace, AI coaching, persistence, and solved-problem flow without code execution.",
+        "Piston is the service that runs code against test cases in CodeCoach. It is not hosted on this public deployment right now due to personal constraints, so Run Code is intentionally offline here. You can still explore the interview workspace, AI coaching, persistence, and solved-problem flow in the live app.",
     };
   }
 
