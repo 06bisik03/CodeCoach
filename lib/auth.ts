@@ -222,9 +222,14 @@ export function getGoogleOAuthConfig(origin: string) {
     return null;
   }
 
-  const redirectUri =
-    process.env.GOOGLE_REDIRECT_URI?.trim() ||
-    new URL("/api/auth/google/callback", origin).toString();
+  const configuredRedirectUri = process.env.GOOGLE_REDIRECT_URI?.trim();
+  const shouldUseOriginRedirect =
+    !configuredRedirectUri ||
+    (process.env.NODE_ENV === "production" &&
+      /localhost|127\.0\.0\.1/i.test(configuredRedirectUri));
+  const redirectUri = shouldUseOriginRedirect
+    ? new URL("/api/auth/google/callback", origin).toString()
+    : configuredRedirectUri;
 
   return {
     clientId,
