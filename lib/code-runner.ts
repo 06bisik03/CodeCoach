@@ -2,13 +2,15 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-export type ExecutionLanguage = "Python" | "JavaScript" | "Java" | "C++";
-
-export type ProblemSlug =
-  | "two-sum"
-  | "valid-parentheses"
-  | "best-time-to-buy-and-sell-stock";
+import {
+  type CompareKind,
+  type ExecutionLanguage,
+  type InputKind,
+  PROBLEM_EXECUTION_META,
+  type ProblemSlug,
+} from "@/lib/problem-metadata";
+export { isProblemSlug } from "@/lib/problem-metadata";
+export type { ExecutionLanguage } from "@/lib/problem-metadata";
 
 export type StoredTestCase = {
   id: number;
@@ -68,20 +70,6 @@ type PistonExecutionResult = {
 };
 
 type LocalCommandResult = PistonExecutionResult["run"];
-
-type SupportedProblemConfig = {
-  buildProgram: (
-    language: ExecutionLanguage,
-    userCode: string,
-    testCases: StoredTestCase[],
-  ) => string;
-  compare: (
-    actual: unknown,
-    expected: unknown,
-    input: unknown,
-  ) => boolean;
-  summarizeInput: (input: unknown) => string;
-};
 
 const DEFAULT_PISTON_API_URL = "http://127.0.0.1:2000/api/v2";
 const PISTON_SETUP_COMMAND =
@@ -160,20 +148,41 @@ function asString(value: unknown) {
   return value;
 }
 
-function escapePythonString(value: string) {
-  return JSON.stringify(value);
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error("Expected an array of strings.");
+  }
+
+  return value as string[];
 }
 
-function escapeJavaOrCppString(value: string) {
-  return JSON.stringify(value);
+function toLiteral(kind: InputKind, value: unknown) {
+  switch (kind) {
+    case "numberArray":
+      return JSON.stringify(asNumberArray(value));
+    case "number":
+      return String(asNumber(value));
+    case "string":
+      return JSON.stringify(asString(value));
+    case "stringArray":
+      return JSON.stringify(asStringArray(value));
+  }
 }
 
 function toJavaIntArrayLiteral(values: number[]) {
   return `new int[]{${values.join(", ")}}`;
 }
 
+function toJavaStringArrayLiteral(values: string[]) {
+  return `new String[]{${values.map((value) => JSON.stringify(value)).join(", ")}}`;
+}
+
 function toCppVectorLiteral(values: number[]) {
   return `{${values.join(", ")}}`;
+}
+
+function toCppStringVectorLiteral(values: string[]) {
+  return `{${values.map((value) => JSON.stringify(value)).join(", ")}}`;
 }
 
 function normalizeNumberArray(value: unknown) {
@@ -197,32 +206,6 @@ function renderValue(value: unknown) {
   return typeof serialized === "string" ? serialized : String(value);
 }
 
-function summarizeTwoSumInput(input: unknown) {
-  const data = asObject(input);
-  return `nums = ${JSON.stringify(data.nums)}, target = ${data.target}`;
-}
-
-function summarizeValidParenthesesInput(input: unknown) {
-  const data = asObject(input);
-  return `s = ${JSON.stringify(data.s)}`;
-}
-
-function summarizeStockInput(input: unknown) {
-  const data = asObject(input);
-  return `prices = ${JSON.stringify(data.prices)}`;
-}
-
-function compareTwoSum(actual: unknown, expected: unknown) {
-  const normalizedActual = normalizeNumberArray(actual);
-  const normalizedExpected = normalizeNumberArray(expected);
-
-  return (
-    normalizedActual !== null &&
-    normalizedExpected !== null &&
-    deepEqual(normalizedActual, normalizedExpected)
-  );
-}
-
 function compareBoolean(actual: unknown, expected: unknown) {
   return typeof actual === "boolean" && typeof expected === "boolean"
     ? actual === expected
@@ -235,79 +218,121 @@ function compareNumber(actual: unknown, expected: unknown) {
     : false;
 }
 
+function compareNumberTolerance(actual: unknown, expected: unknown) {
+  return typeof actual === "number" && typeof expected === "number"
+    ? Math.abs(actual - expected) < 1e-9
+    : false;
+}
+
+function compareUnorderedNumberArray(actual: unknown, expected: unknown) {
+  const normalizedActual = normalizeNumberArray(actual);
+  const normalizedExpected = normalizeNumberArray(expected);
+
+  return (
+    normalizedActual !== null &&
+    normalizedExpected !== null &&
+    deepEqual(normalizedActual, normalizedExpected)
+  );
+}
+
+function compareNumberArray(actual: unknown, expected: unknown) {
+  const actualArray = normalizeNumberArray(actual);
+  const expectedArray = normalizeNumberArray(expected);
+
+  return (
+    actualArray !== null &&
+    expectedArray !== null &&
+    deepEqual(actualArray, expectedArray)
+  );
+}
+
+function compareString(actual: unknown, expected: unknown) {
+  return typeof actual === "string" && typeof expected === "string"
+    ? actual === expected
+    : false;
+}
+
+function compareByKind(compareKind: CompareKind, actual: unknown, expected: unknown) {
+  switch (compareKind) {
+    case "boolean":
+      return compareBoolean(actual, expected);
+    case "number":
+      return compareNumber(actual, expected);
+    case "number-tolerance":
+      return compareNumberTolerance(actual, expected);
+    case "string":
+      return compareString(actual, expected);
+    case "number-array":
+      return compareNumberArray(actual, expected);
+    case "unordered-number-array":
+      return compareUnorderedNumberArray(actual, expected);
+  }
+}
+
+function summarizeInput(problemSlug: ProblemSlug, input: unknown) {
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
+  const data = asObject(input);
+
+  return metadata.argSpecs
+    .map((spec) => `${spec.key} = ${renderValue(data[spec.key])}`)
+    .join(", ");
+}
+
+function serializeJavaValue(kind: InputKind, value: unknown) {
+  switch (kind) {
+    case "numberArray":
+      return toJavaIntArrayLiteral(asNumberArray(value));
+    case "number":
+      return String(asNumber(value));
+    case "string":
+      return JSON.stringify(asString(value));
+    case "stringArray":
+      return toJavaStringArrayLiteral(asStringArray(value));
+  }
+}
+
 function buildPythonProgram(
   problemSlug: ProblemSlug,
   userCode: string,
   testCases: StoredTestCase[],
 ) {
-  const callNameMap: Record<
-    ProblemSlug,
-    {
-      primary: string;
-      alternates: string[];
-    }
-  > = {
-    "two-sum": {
-      primary: "two_sum",
-      alternates: ["twoSum"],
-    },
-    "valid-parentheses": {
-      primary: "is_valid",
-      alternates: ["isValid"],
-    },
-    "best-time-to-buy-and-sell-stock": {
-      primary: "max_profit",
-      alternates: ["maxProfit"],
-    },
-  };
-
-  const callName = callNameMap[problemSlug];
-
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
+  const alternateNames = [metadata.camelName].filter(
+    (name) => name !== metadata.pythonName,
+  );
   const invocationLines = testCases.map((testCase) => {
     const input = asObject(testCase.input);
+    const args = metadata.argSpecs.map((spec) =>
+      toLiteral(spec.kind, input[spec.key]),
+    );
 
-    switch (problemSlug) {
-      case "two-sum": {
-        const nums = JSON.stringify(asNumberArray(input.nums));
-        const target = asNumber(input.target);
-        return `results.append(_codecoach_call(${nums}, ${target}))`;
-      }
-      case "valid-parentheses": {
-        const s = escapePythonString(asString(input.s));
-        return `results.append(_codecoach_call(${s}))`;
-      }
-      case "best-time-to-buy-and-sell-stock": {
-        const prices = JSON.stringify(asNumberArray(input.prices));
-        return `results.append(_codecoach_call(${prices}))`;
-      }
-    }
+    return `results.append(_codecoach_call(${args.join(", ")}))`;
   });
-
-  const solutionInvocationArgs =
-    problemSlug === "two-sum"
-      ? "first_arg, second_arg"
-      : "first_arg";
-
-  const solutionMethodAlternates = callName.alternates
+  const globalAlternateChecks = alternateNames
     .map(
-      (methodName) => `
-    if hasattr(solution, "${methodName}"):
-        return solution.${methodName}(${solutionInvocationArgs})`,
+      (name) =>
+        `    if "${name}" in globals() and callable(globals()["${name}"]):\n        return globals()["${name}"](*args)`,
     )
-    .join("");
+    .join("\n");
+  const solutionAlternateChecks = alternateNames
+    .map(
+      (name) =>
+        `        if hasattr(solution, "${name}"):\n            return solution.${name}(*args)`,
+    )
+    .join("\n");
 
   return [
     "import json",
     userCode,
     "",
-    "def _codecoach_call(first_arg, second_arg=None):",
-    `    if "${callName.primary}" in globals() and callable(globals()["${callName.primary}"]):`,
-    `        return globals()["${callName.primary}"](${solutionInvocationArgs})`,
+    "def _codecoach_call(*args):",
+    `    if "${metadata.pythonName}" in globals() and callable(globals()["${metadata.pythonName}"]):`,
+    `        return globals()["${metadata.pythonName}"](*args)`,
+    globalAlternateChecks,
     '    if "Solution" in globals():',
     "        solution = Solution()",
-    `        if hasattr(solution, "${callName.primary}"):`,
-    `            return solution.${callName.primary}(${solutionInvocationArgs})`,
-    solutionMethodAlternates,
+    `        if hasattr(solution, "${metadata.pythonName}"):\n            return solution.${metadata.pythonName}(*args)`,
+    solutionAlternateChecks,
     '    raise NameError("Expected the starter function or a Solution method to be defined.")',
     "",
     "results = []",
@@ -316,7 +341,9 @@ function buildPythonProgram(
     "print(json.dumps(results))",
     `print("${RESULT_END}")`,
     "",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildJavaScriptProgram(
@@ -324,58 +351,33 @@ function buildJavaScriptProgram(
   userCode: string,
   testCases: StoredTestCase[],
 ) {
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
   const invocationLines = testCases.map((testCase) => {
     const input = asObject(testCase.input);
+    const args = metadata.argSpecs.map((spec) =>
+      toLiteral(spec.kind, input[spec.key]),
+    );
 
-    switch (problemSlug) {
-      case "two-sum":
-        return `results.push(_codecoachCall(${JSON.stringify(
-          asNumberArray(input.nums),
-        )}, ${asNumber(input.target)}));`;
-      case "valid-parentheses":
-        return `results.push(_codecoachCall(${JSON.stringify(
-          asString(input.s),
-        )}));`;
-      case "best-time-to-buy-and-sell-stock":
-        return `results.push(_codecoachCall(${JSON.stringify(
-          asNumberArray(input.prices),
-        )}));`;
-    }
+    return `results.push(_codecoachCall(${args.join(", ")}));`;
   });
-
-  const fnName =
-    problemSlug === "two-sum"
-      ? "twoSum"
-      : problemSlug === "valid-parentheses"
-        ? "isValid"
-        : "maxProfit";
-
-  const alternateFnName =
-    problemSlug === "two-sum"
-      ? "two_sum"
-      : problemSlug === "valid-parentheses"
-        ? "is_valid"
-        : "max_profit";
 
   return [
     userCode,
     "",
-    "function _codecoachCall(firstArg, secondArg) {",
-    `  if (typeof ${fnName} === "function") {`,
-    "    return secondArg === undefined ? " +
-      `${fnName}(firstArg) : ${fnName}(firstArg, secondArg);`,
+    "function _codecoachCall(...args) {",
+    `  if (typeof ${metadata.camelName} === "function") {`,
+    `    return ${metadata.camelName}(...args);`,
     "  }",
-    `  if (typeof ${alternateFnName} === "function") {`,
-    "    return secondArg === undefined ? " +
-      `${alternateFnName}(firstArg) : ${alternateFnName}(firstArg, secondArg);`,
+    `  if (typeof ${metadata.pythonName} === "function") {`,
+    `    return ${metadata.pythonName}(...args);`,
     "  }",
     '  if (typeof Solution === "function") {',
     "    const solution = new Solution();",
-    `    if (typeof solution.${fnName} === "function") {`,
-    `      return secondArg === undefined ? solution.${fnName}(firstArg) : solution.${fnName}(firstArg, secondArg);`,
+    `    if (typeof solution.${metadata.camelName} === "function") {`,
+    `      return solution.${metadata.camelName}(...args);`,
     "    }",
-    `    if (typeof solution.${alternateFnName} === "function") {`,
-    `      return secondArg === undefined ? solution.${alternateFnName}(firstArg) : solution.${alternateFnName}(firstArg, secondArg);`,
+    `    if (typeof solution.${metadata.pythonName} === "function") {`,
+    `      return solution.${metadata.pythonName}(...args);`,
     "    }",
     "  }",
     '  throw new Error("Expected the starter function or a Solution method to be defined.");',
@@ -395,32 +397,14 @@ function buildJavaProgram(
   userCode: string,
   testCases: StoredTestCase[],
 ) {
-  const methodName =
-    problemSlug === "two-sum"
-      ? "twoSum"
-      : problemSlug === "valid-parentheses"
-        ? "isValid"
-        : "maxProfit";
-
-  const invocationLines = testCases.map((testCase, index) => {
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
+  const invocationLines = testCases.map((testCase) => {
     const input = asObject(testCase.input);
+    const args = metadata.argSpecs.map((spec) =>
+      serializeJavaValue(spec.kind, input[spec.key]),
+    );
 
-    switch (problemSlug) {
-      case "two-sum":
-        return `        results.add(toJson(solution.${methodName}(${toJavaIntArrayLiteral(
-          asNumberArray(input.nums),
-        )}, ${asNumber(input.target)})));`;
-      case "valid-parentheses":
-        return `        results.add(toJson(solution.${methodName}(${JSON.stringify(
-          asString(input.s),
-        )})));`;
-      case "best-time-to-buy-and-sell-stock":
-        return `        results.add(toJson(solution.${methodName}(${toJavaIntArrayLiteral(
-          asNumberArray(input.prices),
-        )})));`;
-      default:
-        return `        // Unsupported test case ${index}`;
-    }
+    return `        results.add(toJson(solution.${metadata.camelName}(${args.join(", ")})));`;
   });
 
   return [
@@ -429,6 +413,10 @@ function buildJavaProgram(
     userCode,
     "",
     "class CodeCoachMain {",
+    "    private static String escapeJson(String value) {",
+    '        return value.replace("\\\\", "\\\\\\\\").replace("\\"", "\\\\\\\"");',
+    "    }",
+    "",
     "    private static String toJson(int[] values) {",
     '        if (values == null) return "null";',
     '        StringBuilder builder = new StringBuilder("[");',
@@ -448,6 +436,15 @@ function buildJavaProgram(
     "        return Integer.toString(value);",
     "    }",
     "",
+    "    private static String toJson(double value) {",
+    "        return Double.toString(value);",
+    "    }",
+    "",
+    "    private static String toJson(String value) {",
+    '        if (value == null) return "null";',
+    '        return "\\"" + escapeJson(value) + "\\"";',
+    "    }",
+    "",
     "    public static void main(String[] args) {",
     "        Solution solution = new Solution();",
     "        List<String> results = new ArrayList<>();",
@@ -461,50 +458,85 @@ function buildJavaProgram(
   ].join("\n");
 }
 
+function buildCppValueDeclaration(
+  varName: string,
+  kind: InputKind,
+  value: unknown,
+) {
+  switch (kind) {
+    case "numberArray":
+      return `    std::vector<int> ${varName} = ${toCppVectorLiteral(asNumberArray(value))};`;
+    case "stringArray":
+      return `    std::vector<std::string> ${varName} = ${toCppStringVectorLiteral(asStringArray(value))};`;
+    default:
+      return null;
+  }
+}
+
+function serializeCppValue(kind: InputKind, value: unknown) {
+  switch (kind) {
+    case "numberArray":
+      return toCppVectorLiteral(asNumberArray(value));
+    case "number":
+      return String(asNumber(value));
+    case "string":
+      return JSON.stringify(asString(value));
+    case "stringArray":
+      return toCppStringVectorLiteral(asStringArray(value));
+  }
+}
+
 function buildCppProgram(
   problemSlug: ProblemSlug,
   userCode: string,
   testCases: StoredTestCase[],
 ) {
-  const methodName =
-    problemSlug === "two-sum"
-      ? "twoSum"
-      : problemSlug === "valid-parentheses"
-        ? "isValid"
-        : "maxProfit";
-
-  const invocationBlocks = testCases.map((testCase, index) => {
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
+  const invocationBlocks = testCases.map((testCase, testIndex) => {
     const input = asObject(testCase.input);
+    const declarations: string[] = [];
+    const args = metadata.argSpecs.map((spec) => {
+      if (spec.kind === "numberArray" || spec.kind === "stringArray") {
+        const variableName = `case_${testIndex}_${spec.key}`;
+        const declaration = buildCppValueDeclaration(
+          variableName,
+          spec.kind,
+          input[spec.key],
+        );
 
-    switch (problemSlug) {
-      case "two-sum":
-        return [
-          `    std::vector<int> case_${index} = ${toCppVectorLiteral(asNumberArray(
-            input.nums,
-          ))};`,
-          `    results.push_back(toJson(solution.${methodName}(case_${index}, ${asNumber(
-            input.target,
-          )})));`,
-        ].join("\n");
-      case "valid-parentheses":
-        return `    results.push_back(toJson(solution.${methodName}(${escapeJavaOrCppString(
-          asString(input.s),
-        )})));`;
-      case "best-time-to-buy-and-sell-stock":
-        return [
-          `    std::vector<int> case_${index} = ${toCppVectorLiteral(asNumberArray(
-            input.prices,
-          ))};`,
-          `    results.push_back(toJson(solution.${methodName}(case_${index})));`,
-        ].join("\n");
-    }
+        if (declaration) {
+          declarations.push(declaration);
+        }
+
+        return variableName;
+      }
+
+      return serializeCppValue(spec.kind, input[spec.key]);
+    });
+
+    return [
+      ...declarations,
+      `    results.push_back(toJson(solution.${metadata.camelName}(${args.join(", ")})));`,
+    ].join("\n");
   });
 
   return [
     "#include <iostream>",
+    "#include <sstream>",
     "#include <string>",
     "#include <vector>",
     userCode,
+    "",
+    "static std::string escapeJson(const std::string& value) {",
+    "    std::string escaped;",
+    "    for (char character : value) {",
+    '        if (character == \'\\\\\' || character == \'"\') {',
+    "            escaped += '\\\\';",
+    "        }",
+    "        escaped += character;",
+    "    }",
+    "    return escaped;",
+    "}",
     "",
     "static std::string toJson(const std::vector<int>& values) {",
     '    std::string json = "[";',
@@ -522,6 +554,16 @@ function buildCppProgram(
     "",
     "static std::string toJson(int value) {",
     "    return std::to_string(value);",
+    "}",
+    "",
+    "static std::string toJson(double value) {",
+    "    std::ostringstream stream;",
+    "    stream << value;",
+    "    return stream.str();",
+    "}",
+    "",
+    "static std::string toJson(const std::string& value) {",
+    "    return std::string(\"\\\"\") + escapeJson(value) + \"\\\"\";",
     "}",
     "",
     "int main() {",
@@ -542,85 +584,28 @@ function buildCppProgram(
   ].join("\n");
 }
 
-const SUPPORTED_PROBLEMS: Record<ProblemSlug, SupportedProblemConfig> = {
-  "two-sum": {
-    buildProgram(language, userCode, testCases) {
-      switch (language) {
-        case "Python":
-          return buildPythonProgram("two-sum", userCode, testCases);
-        case "JavaScript":
-          return buildJavaScriptProgram("two-sum", userCode, testCases);
-        case "Java":
-          return buildJavaProgram("two-sum", userCode, testCases);
-        case "C++":
-          return buildCppProgram("two-sum", userCode, testCases);
-      }
-    },
-    compare: compareTwoSum,
-    summarizeInput: summarizeTwoSumInput,
-  },
-  "valid-parentheses": {
-    buildProgram(language, userCode, testCases) {
-      switch (language) {
-        case "Python":
-          return buildPythonProgram("valid-parentheses", userCode, testCases);
-        case "JavaScript":
-          return buildJavaScriptProgram(
-            "valid-parentheses",
-            userCode,
-            testCases,
-          );
-        case "Java":
-          return buildJavaProgram("valid-parentheses", userCode, testCases);
-        case "C++":
-          return buildCppProgram("valid-parentheses", userCode, testCases);
-      }
-    },
-    compare: compareBoolean,
-    summarizeInput: summarizeValidParenthesesInput,
-  },
-  "best-time-to-buy-and-sell-stock": {
-    buildProgram(language, userCode, testCases) {
-      switch (language) {
-        case "Python":
-          return buildPythonProgram(
-            "best-time-to-buy-and-sell-stock",
-            userCode,
-            testCases,
-          );
-        case "JavaScript":
-          return buildJavaScriptProgram(
-            "best-time-to-buy-and-sell-stock",
-            userCode,
-            testCases,
-          );
-        case "Java":
-          return buildJavaProgram(
-            "best-time-to-buy-and-sell-stock",
-            userCode,
-            testCases,
-          );
-        case "C++":
-          return buildCppProgram(
-            "best-time-to-buy-and-sell-stock",
-            userCode,
-            testCases,
-          );
-      }
-    },
-    compare: compareNumber,
-    summarizeInput: summarizeStockInput,
-  },
-};
+function buildExecutionProgramForProblem(
+  problemSlug: ProblemSlug,
+  language: ExecutionLanguage,
+  userCode: string,
+  testCases: StoredTestCase[],
+) {
+  switch (language) {
+    case "Python":
+      return buildPythonProgram(problemSlug, userCode, testCases);
+    case "JavaScript":
+      return buildJavaScriptProgram(problemSlug, userCode, testCases);
+    case "Java":
+      return buildJavaProgram(problemSlug, userCode, testCases);
+    case "C++":
+      return buildCppProgram(problemSlug, userCode, testCases);
+  }
+}
 
 export function isExecutionLanguage(
   value: string,
 ): value is ExecutionLanguage {
   return value in PISTON_LANGUAGE_CONFIG;
-}
-
-export function isProblemSlug(value: string): value is ProblemSlug {
-  return value in SUPPORTED_PROBLEMS;
 }
 
 export function buildExecutionProgram(
@@ -629,11 +614,7 @@ export function buildExecutionProgram(
   userCode: string,
   testCases: StoredTestCase[],
 ) {
-  return SUPPORTED_PROBLEMS[problemSlug].buildProgram(
-    language,
-    userCode,
-    testCases,
-  );
+  return buildExecutionProgramForProblem(problemSlug, language, userCode, testCases);
 }
 
 export function extractExecutionResults(stdout: string) {
@@ -656,7 +637,7 @@ export function extractExecutionResults(stdout: string) {
 }
 
 export function summarizeTestInput(problemSlug: ProblemSlug, input: unknown) {
-  return SUPPORTED_PROBLEMS[problemSlug].summarizeInput(input);
+  return summarizeInput(problemSlug, input);
 }
 
 function createEmptyRunResult(): LocalCommandResult {
@@ -859,13 +840,13 @@ export function evaluateResults(
   testCases: StoredTestCase[],
   actualResults: unknown[],
 ): RunCaseResult[] {
-  const config = SUPPORTED_PROBLEMS[problemSlug];
+  const metadata = PROBLEM_EXECUTION_META[problemSlug];
 
   return testCases.map((testCase, index) => {
     const actual = index < actualResults.length ? actualResults[index] : null;
     const passed =
       index < actualResults.length
-        ? config.compare(actual, testCase.expected, testCase.input)
+        ? compareByKind(metadata.compareKind, actual, testCase.expected)
         : false;
 
     return {

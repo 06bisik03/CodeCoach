@@ -15,7 +15,14 @@ import javascript from "highlight.js/lib/languages/javascript";
 import python from "highlight.js/lib/languages/python";
 import { MonacoEditorPanel } from "@/components/monaco-editor-panel";
 import { useCodeAnalysis } from "@/hooks/use-code-analysis";
-import { getDemoRunShowcaseCode } from "@/lib/demo-run-showcase";
+import {
+  getDemoRunShowcaseCode,
+  hasDemoRunShowcaseProblem,
+} from "@/lib/demo-run-showcase";
+import {
+  getExpectedEntryPoint as getProblemExpectedEntryPoint,
+  isProblemSlug,
+} from "@/lib/problem-metadata";
 
 type LanguageOption = "Python" | "JavaScript" | "Java" | "C++";
 
@@ -392,47 +399,11 @@ function getExpectedEntryPoint(
   problemSlug: string | null,
   language: LanguageOption,
 ) {
-  if (!problemSlug) {
+  if (!problemSlug || !isProblemSlug(problemSlug)) {
     return "the starter function";
   }
 
-  switch (problemSlug) {
-    case "two-sum":
-      switch (language) {
-        case "Python":
-          return "`two_sum(nums, target)` or `Solution.two_sum(...)`";
-        case "JavaScript":
-          return "`twoSum(nums, target)` or `Solution.twoSum(...)`";
-        case "Java":
-          return "`Solution.twoSum(int[] nums, int target)`";
-        case "C++":
-          return "`Solution::twoSum(vector<int>& nums, int target)`";
-      }
-    case "valid-parentheses":
-      switch (language) {
-        case "Python":
-          return "`is_valid(s)` or `Solution.is_valid(...)`";
-        case "JavaScript":
-          return "`isValid(s)` or `Solution.isValid(...)`";
-        case "Java":
-          return "`Solution.isValid(String s)`";
-        case "C++":
-          return "`Solution::isValid(string s)`";
-      }
-    case "best-time-to-buy-and-sell-stock":
-      switch (language) {
-        case "Python":
-          return "`max_profit(prices)` or `Solution.max_profit(...)`";
-        case "JavaScript":
-          return "`maxProfit(prices)` or `Solution.maxProfit(...)`";
-        case "Java":
-          return "`Solution.maxProfit(int[] prices)`";
-        case "C++":
-          return "`Solution::maxProfit(vector<int>& prices)`";
-      }
-    default:
-      return "the starter function";
-  }
+  return getProblemExpectedEntryPoint(problemSlug, language);
 }
 
 function sanitizeRunnerDetails(details: string) {
@@ -1040,14 +1011,7 @@ export function CodeCoachWorkspace() {
   }
 
   function handleRunCodePreview(variant: "accepted" | "wrong-answer") {
-    if (
-      !selectedProblemSlug ||
-      !(
-        selectedProblemSlug === "two-sum" ||
-        selectedProblemSlug === "valid-parentheses" ||
-        selectedProblemSlug === "best-time-to-buy-and-sell-stock"
-      )
-    ) {
+    if (!selectedProblemSlug || !hasDemoRunShowcaseProblem(selectedProblemSlug)) {
       return;
     }
 
