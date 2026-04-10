@@ -14,14 +14,23 @@ export async function GET(request: Request) {
     );
   }
 
-  const messages = await prisma.chatMessage.findMany({
-    where: {
-      sessionId,
-    },
-    orderBy: {
-      createdAt: "asc",
-    },
-  });
+  try {
+    const messages = await prisma.chatMessage.findMany({
+      where: {
+        sessionId,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
 
-  return NextResponse.json(messages);
+    return NextResponse.json(messages);
+  } catch (error) {
+    console.error(
+      "GET /api/chat/history failed, returning empty history fallback",
+      error,
+    );
+
+    return NextResponse.json([]);
+  }
 }

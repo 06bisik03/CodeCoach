@@ -5,6 +5,7 @@ import {
   openai,
 } from "@/lib/openai";
 import { isLikelyPlaceholderCode } from "@/lib/code-analysis";
+import { getFallbackProblem } from "@/lib/problem-fallback";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -48,11 +49,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const problem = await prisma.problem.findUnique({
-      where: {
-        slug: problemSlug,
-      },
-    });
+    let problem = null;
+
+    try {
+      problem = await prisma.problem.findUnique({
+        where: {
+          slug: problemSlug,
+        },
+      });
+    } catch (dbError) {
+      console.error(
+        `POST /api/analyze failed to load problem ${problemSlug} from DB, using fallback`,
+        dbError,
+      );
+    }
+
+    problem ??= getFallbackProblem(problemSlug);
 
     if (!problem) {
       return errorResponse("Problem not found.", 404);

@@ -6,6 +6,7 @@ import {
   getAiUnavailableMessage,
   openai,
 } from "@/lib/openai";
+import { getFallbackProblem } from "@/lib/problem-fallback";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -47,11 +48,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const problem = await prisma.problem.findUnique({
-      where: {
-        slug: problemSlug,
-      },
-    });
+    let problem = null;
+
+    try {
+      problem = await prisma.problem.findUnique({
+        where: {
+          slug: problemSlug,
+        },
+      });
+    } catch (dbError) {
+      console.error(
+        `POST /api/chat failed to load problem ${problemSlug} from DB, using fallback`,
+        dbError,
+      );
+    }
+
+    problem ??= getFallbackProblem(problemSlug);
 
     if (!problem) {
       return NextResponse.json(
@@ -60,14 +72,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const history = await prisma.chatMessage.findMany({
-      where: {
-        sessionId,
-      },
-      orderBy: {
-        createdAt: "asc",
-      },
-    });
+    let history: Array<{
+      role: string;
+      content: string;
+      createdAt: Date;
+    }> = [];
+
+    try {
+      history = await prisma.chatMessage.findMany({
+        where: {
+          sessionId,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      });
+    } catch (dbError) {
+      console.error(
+        "POST /api/chat failed to load prior chat history, continuing without it",
+        dbError,
+      );
+    }
 
     const problemContext = [
       `Problem title: ${problem.title}`,
@@ -118,32 +143,39 @@ export async function POST(request: Request) {
       completion.choices[0]?.message?.content?.trim() ||
       "I do not have feedback yet. Try asking again with a bit more detail.";
 
-    await prisma.$transaction([
-      prisma.session.upsert({
-        where: {
-          id: sessionId,
-        },
-        update: {},
-        create: {
-          id: sessionId,
-          problemSlug,
-        },
-      }),
-      prisma.chatMessage.create({
-        data: {
-          sessionId,
-          role: "user",
-          content: message,
-        },
-      }),
-      prisma.chatMessage.create({
-        data: {
-          sessionId,
-          role: "assistant",
-          content: assistantReply,
-        },
-      }),
-    ]);
+    try {
+      await prisma.$transaction([
+        prisma.session.upsert({
+          where: {
+            id: sessionId,
+          },
+          update: {},
+          create: {
+            id: sessionId,
+            problemSlug,
+          },
+        }),
+        prisma.chatMessage.create({
+          data: {
+            sessionId,
+            role: "user",
+            content: message,
+          },
+        }),
+        prisma.chatMessage.create({
+          data: {
+            sessionId,
+            role: "assistant",
+            content: assistantReply,
+          },
+        }),
+      ]);
+    } catch (dbError) {
+      console.error(
+        "POST /api/chat could not persist chat history, returning reply without persistence",
+        dbError,
+      );
+    }
 
     return NextResponse.json({ reply: assistantReply });
   } catch (error) {

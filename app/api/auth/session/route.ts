@@ -20,11 +20,11 @@ export async function GET() {
   } catch (error) {
     console.error("GET /api/auth/session failed", error);
 
-    return NextResponse.json(
-      {
-        error: "CodeCoach could not load your session right now.",
-      },
-      { status: 500 },
+    return clearAuthSessionCookie(
+      NextResponse.json({
+        user: null,
+        solvedProblemSlugs: [],
+      }),
     );
   }
 }
