@@ -318,6 +318,7 @@ function createDemoRunResponse(
   variant: "accepted" | "wrong-answer",
   examples: ProblemExample[],
   problemTitle?: string,
+  solveState?: SolveState,
 ): RunResponse {
   const sourceExamples =
     examples.length > 0 ? examples.slice(0, 3) : [createFallbackDemoExample(problemTitle)];
@@ -346,6 +347,7 @@ function createDemoRunResponse(
         ? `Demo preview: accepted on ${cases.length} visible test case${cases.length === 1 ? "" : "s"}.`
         : `Demo preview: passed ${passedCount} of ${cases.length} visible test cases.`,
     cases,
+    solveState,
   };
 }
 
@@ -1010,9 +1012,44 @@ export function CodeCoachWorkspace() {
     window.location.assign("/api/auth/google");
   }
 
-  function handleRunCodePreview(variant: "accepted" | "wrong-answer") {
+  async function handleRunCodePreview(variant: "accepted" | "wrong-answer") {
     if (!selectedProblemSlug || !hasDemoRunShowcaseProblem(selectedProblemSlug)) {
       return;
+    }
+
+    let solveState: SolveState | undefined;
+
+    if (variant === "accepted") {
+      if (authUser) {
+        try {
+          solveState = await saveSolvedProblem(selectedProblemSlug);
+
+          if (solveState.newlySolved && selectedProblem) {
+            setSolvedModalState({
+              title: selectedProblem.title,
+              requiresLogin: false,
+              saved: true,
+            });
+          }
+        } catch (error) {
+          showToast(getErrorMessage(error));
+        }
+      } else {
+        solveState = {
+          saved: false,
+          newlySolved: false,
+          alreadySolved: false,
+          requiresLogin: true,
+        };
+
+        if (selectedProblem) {
+          setSolvedModalState({
+            title: selectedProblem.title,
+            requiresLogin: true,
+            saved: false,
+          });
+        }
+      }
     }
 
     setEditorCode(
@@ -1023,6 +1060,7 @@ export function CodeCoachWorkspace() {
       variant,
       normalizeExamples(selectedProblem?.examples),
       selectedProblem?.title,
+      solveState,
     );
 
     setRunCodeNoticeState(null);
